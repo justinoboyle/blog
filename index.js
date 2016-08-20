@@ -12,8 +12,31 @@ const port = process.env.PORT || 3000;
 
 const websitePrefix = "http://localhost:3000"
 
+const showdown = require('showdown'),
+    converter = new showdown.Converter();
+
+String.prototype.trunc =
+    function (n, useWordBoundary) {
+        var isTooLong = this.length > n,
+            s_ = isTooLong ? this.substr(0, n - 1) : this;
+        s_ = (useWordBoundary && isTooLong) ? s_.substr(0, s_.lastIndexOf(' ')) : s_;
+        return isTooLong ? s_ + '&hellip;' : s_;
+    };
+
 app.set('view engine', 'ejs');
 app.use('/static', express.static(staticDirBase));
+
+app.use(require('express-minify-html')({
+    override: true,
+    htmlMinifier: {
+        removeComments: true,
+        collapseWhitespace: true,
+        collapseBooleanAttributes: true,
+        removeAttributeQuotes: true,
+        removeEmptyAttributes: true,
+        minifyJS: true
+    }
+}));
 
 pg.defaults.ssl = true;
 
@@ -36,7 +59,9 @@ app.get('/post/:post', (req, res) => {
             return res.send("Oops, an error occured.");
         if (dbRes.rows.length <= 0)
             return res.send("oops, an error occured.");
-        res.render(__dirname + '/pages/post', { post: dbRes.rows[0] });
+        let post = dbRes.rows[0];
+        post.content = converter.makeHtml(post.content);
+        res.render(__dirname + '/pages/post', { post: post });
     });
 });
 
@@ -48,6 +73,9 @@ app.get('/:page*?', (req, res) => {
     dbClient.query("SELECT id,title,content,categories,timestamp FROM POSTS ORDER BY TIMESTAMP DESC OFFSET($1) LIMIT($2)", [offset, limit], (err, dbRes) => {
         if (err)
             return res.send("Oops, an error occured.");
+        let temp = dbRes.rows;
+        for (let x of temp)
+            x.content = converter.makeHtml(x.content.trunc(120 * 10, true));
         res.render(__dirname + '/pages/index', { posts: dbRes.rows, nextPage: page + 1 });
     });
 });
@@ -55,7 +83,7 @@ app.get('/:page*?', (req, res) => {
 app.get('/sitemap.xml', (req, res) => {
     dbClient.query("SELECT id FROM POSTS ORDER BY TIMESTAMP DESC", [offset, limit], (err, dbRes) => {
         let build = [];
-        for(let row of dbRes.rows)
+        for (let row of dbRes.rows)
             build.push('  <url><loc>' + websitePrefix + '/post/' + row.id + '</url></loc>');
         return res.send([
             "<?xml version='1.0' encoding='UTF-8'?>",
